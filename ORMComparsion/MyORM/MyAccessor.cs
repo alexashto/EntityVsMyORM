@@ -11,7 +11,7 @@ using System.Configuration;
 
 namespace MyORM
 {
-    public class MyAccessor<T>
+    public class MyAccessor<T> : IDisposable
     {
         private string connectionString;
         private string tableName;
@@ -21,15 +21,26 @@ namespace MyORM
         private PropertyInfo[] objProps;
         int idFieldIndex;
 
+        SqlConnection connection;
+
+
         public MyAccessor()
         {
             connectionString = ConfigurationManager.ConnectionStrings["MyORMConnectionString"].ConnectionString;
+            connection = new SqlConnection(connectionString);
             GetTableInfo();
+
         }
+
+
+        public void Dispose()
+        {
+            connection.Dispose();
+        }
+
 
         private void GetTableInfo()
         {
-
             Type entityType = typeof(T);
 
             tableName = ((TableAttribute)entityType.GetCustomAttribute(typeof(TableAttribute), false)).Name;
@@ -57,9 +68,6 @@ namespace MyORM
             objProps = objPropsList.ToArray();
 
 
-
-            //idField = ((TableAttribute)entityType.GetCustomAttribute(typeof(TableAttribute), false)).IdField;
-
             for (int i = 0; i < fieldNames.Length; i++)
             {
                 if (objProps[i].Name.ToLower().Contains("id"))
@@ -68,115 +76,103 @@ namespace MyORM
                     break;
                 }
             }
-
         }
 
 
         public List<T> GetAll()
         {
-            using (var connection = new SqlConnection(connectionString))
+
+            connection.Open();
+            SqlCommand cmd = connection.CreateCommand();
+            cmd.CommandText = string.Format("SELECT {0} FROM {1}", string.Join(", ", fieldNames), tableName);
+            SqlDataReader reader = cmd.ExecuteReader();
+
+            List<T> result = new List<T>();
+
+            while (reader.Read())
             {
-                connection.Open();
-                SqlCommand cmd = connection.CreateCommand();
-                cmd.CommandText = string.Format("SELECT {0} FROM {1}", string.Join(", ", fieldNames), tableName);
-                SqlDataReader reader = cmd.ExecuteReader();
+                var item = Activator.CreateInstance(typeof(T));
 
-                List<T> result = new List<T>();
-
-                while (reader.Read())
+                for (int i = 0; i < fieldNames.Length; i++)
                 {
-                    var item = Activator.CreateInstance(typeof(T));
-
-                    for (int i = 0; i < fieldNames.Length; i++)
-                    {
-                        objProps[i].SetValue(item, reader[fieldNames[i]]);
-                    }
-
-                    result.Add((T)item);
+                    objProps[i].SetValue(item, reader[fieldNames[i]]);
                 }
 
-                connection.Close();
-                reader.Close();
-
-                return result;
+                result.Add((T)item);
             }
 
+            connection.Close();
+            reader.Close();
+
+            return result;
         }
+
 
         public void DeleteById(int id)
         {
-            using (var connection = new SqlConnection(connectionString))
-            {
-                string query = string.Format("DELETE FROM {0} WHERE {1} = @Id", tableName, idField);
+            string query = string.Format("DELETE FROM {0} WHERE {1} = @Id", tableName, idField);
 
-                using (SqlCommand cmd = new SqlCommand(query, connection))
-                {
-                    cmd.Parameters.AddWithValue("@Id", id);
-                    connection.Open();
-                    cmd.ExecuteNonQuery();
-                    connection.Close();
-                }
+            using (SqlCommand cmd = new SqlCommand(query, connection))
+            {
+                cmd.Parameters.AddWithValue("@Id", id);
+                connection.Open();
+                cmd.ExecuteNonQuery();
+                connection.Close();
             }
         }
+
 
         public void Insert(T item)
         {
-            using (var connection = new SqlConnection(connectionString))
+
+            string[] fldNames = fieldNames.ToArray();
+            fldNames = fldNames.Where(w => w != fldNames[idFieldIndex]).ToArray();
+            string query = string.Format("INSERT INTO {0} ({1}) VALUES (@{2})", tableName, string.Join(", ", fldNames), string.Join(", @", fldNames));
+            using (SqlCommand cmd = new SqlCommand(query, connection))
             {
-                string[] fldNames = fieldNames.ToArray();
-                fldNames = fldNames.Where(w => w != fldNames[idFieldIndex]).ToArray();
-                string query = string.Format("INSERT INTO {0} ({1}) VALUES (@{2})", tableName, string.Join(", ", fldNames), string.Join(", @", fldNames));
-                using (SqlCommand cmd = new SqlCommand(query, connection))
+                for (int i = 0; i < fieldNames.Length; i++)
                 {
-                    for (int i = 0; i < fieldNames.Length; i++)
+                    if (i != idFieldIndex)
                     {
-                        if (i != idFieldIndex)
-                        {
-                            cmd.Parameters.AddWithValue("@" + fieldNames[i], objProps[i].GetValue(item));
-                        }
+                        cmd.Parameters.AddWithValue("@" + fieldNames[i], objProps[i].GetValue(item));
                     }
-                    connection.Open();
-                    cmd.ExecuteNonQuery();
-                    connection.Close();
                 }
+                connection.Open();
+                cmd.ExecuteNonQuery();
+                connection.Close();
             }
         }
-
-
 
 
         public T GetById(int id)
         {
-            using (var connection = new SqlConnection(connectionString))
+
+            connection.Open();
+
+            string query = string.Format("SELECT {0} FROM {1} WHERE {2} = @Id", string.Join(", ", fieldNames), tableName, idField);
+
+            SqlCommand cmd = connection.CreateCommand();
+            cmd.CommandText = query;
+
+            cmd.Parameters.AddWithValue("@Id", id);
+
+            SqlDataReader reader = cmd.ExecuteReader();
+
+            var result = Activator.CreateInstance(typeof(T));
+
+            if (reader.Read())
             {
-                connection.Open();
-
-                string query = string.Format("SELECT {0} FROM {1} WHERE {2} = @Id", string.Join(", ", fieldNames), tableName, idField);
-
-                SqlCommand cmd = connection.CreateCommand();
-                cmd.CommandText = query;
-
-                cmd.Parameters.AddWithValue("@Id", id);
-
-                SqlDataReader reader = cmd.ExecuteReader();
-
-                var result = Activator.CreateInstance(typeof(T));
-
-                if (reader.Read())
+                for (int i = 0; i < fieldNames.Length; i++)
                 {
-                    for (int i = 0; i < fieldNames.Length; i++)
-                    {
-                        objProps[i].SetValue(result, reader[fieldNames[i]]);
-                    }
-
+                    objProps[i].SetValue(result, reader[fieldNames[i]]);
                 }
-
-                cmd.ExecuteNonQuery();
-                connection.Close();
-                reader.Close();
-
-                return (T)result;
             }
+
+            cmd.ExecuteNonQuery();
+            connection.Close();
+            reader.Close();
+
+            return (T)result;
         }
 
     }

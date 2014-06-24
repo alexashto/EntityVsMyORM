@@ -16,21 +16,23 @@ namespace ORMComparsion
     {
         MyAccessor<Employee> _employeesAccessor;
         MyAccessor<Company> _companiesAccessor;
+        CompaniesContext _companiesContext;
 
         [TestFixtureSetUp]
         public void Init()
         {
             _employeesAccessor = new MyAccessor<Employee>();
             _companiesAccessor = new MyAccessor<Company>();
-            using (var db = new CompaniesContext())
+            _companiesContext = new CompaniesContext();
+
+
+            _companiesContext.Database.Initialize(false);
+
+            for (int i = 1; i <= 100; i++)
             {
-                db.Database.Initialize(false);
+                var company = new Company();
 
-                for (int i = 1; i <= 100; i++)
-                {
-                    var company = new Company();
-
-                    var Employees = new List<Employee>()
+                var Employees = new List<Employee>()
                     {                      
                         new Employee() {Name = "Vitaly"},
                         new Employee() {Name = "Alex"},
@@ -39,15 +41,24 @@ namespace ORMComparsion
                         new Employee() {Name = "Bob"}
                     };
 
-                    company.Name = String.Format("Company {0}", i);
-                    company.Employees = Employees;
+                company.Name = String.Format("Company {0}", i);
+                company.Employees = Employees;
 
-                    db.Companies.Add(company);
-                }
-
-                db.SaveChanges();
+                _companiesContext.Companies.Add(company);
             }
+
+            _companiesContext.SaveChanges();
+
         }
+
+        [TestFixtureTearDown]
+        public void TearDown()
+        {
+            ((IDisposable)_companiesContext).Dispose();
+            ((IDisposable)_employeesAccessor).Dispose();
+            ((IDisposable)_companiesAccessor).Dispose();
+        }
+
 
 
         [Test]
@@ -55,12 +66,9 @@ namespace ORMComparsion
         {
             for (int i = 0; i < 1000; i++)
             {
-                using (var db = new CompaniesContext())
-                {
-                    var result = from company in db.Companies
-                                 select company;
 
-                }
+                var result = from company in _companiesContext.Companies
+                             select company;
             }
         }
 
@@ -69,13 +77,11 @@ namespace ORMComparsion
         {
             for (int i = 0; i < 1000; i++)
             {
-                using (var db = new CompaniesContext())
-                {
-                    var result = from company in db.Companies
-                                 from employee in db.Employees
-                                 select new { CompanyName = company.Name, EmployeeName = employee.Name };
 
-                }
+                var result = from company in _companiesContext.Companies
+                             from employee in _companiesContext.Employees
+                             select new { CompanyName = company.Name, EmployeeName = employee.Name };
+
             }
         }
 
